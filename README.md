@@ -1,8 +1,8 @@
 # 🏠 House Price Prediction
-### End-to-End Regression Pipeline — King County, Washington
+### End-to-End Regression Pipeline — Seattle Area, Washington
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![Sklearn](https://img.shields.io/badge/Scikit--learn-1.3+-orange)
+![Python](https://img.shields.io/badge/Python-3.13+-blue)
+![Sklearn](https://img.shields.io/badge/Scikit--learn-1.9-orange)
 ![Status](https://img.shields.io/badge/Status-Complete-green)
 
 ---
@@ -10,12 +10,15 @@
 ## 📋 Project Overview
 
 A complete **end-to-end regression pipeline** that predicts house sale prices
-in King County, Washington — including Seattle — using real estate transaction
-data from May 2014 to May 2015.
+in the Seattle area of Washington State, using real estate sales from
+May to July 2014.
 
 This project demonstrates production-ready data science practices: leakage-free
-pipelines, deliberate feature engineering, multi-model comparison, and honest
-evaluation on completely unseen data.
+pipelines, deliberate feature engineering, multi-model comparison, a log-price
+target, model explanation with SHAP, and honest evaluation on unseen data.
+
+It also includes a **Streamlit web app** where anyone can enter a house's details
+and get a predicted price (see **Open the App** below).
 
 ---
 
@@ -30,12 +33,12 @@ location, and condition — using only information available at the time of list
 
 | Property | Detail |
 |---|---|
-| **Source** | King County House Sales — Kaggle |
-| **Size** | ~21,000 house sales |
-| **Period** | May 2014 — May 2015 |
-| **Location** | King County, Washington, USA |
+| **Source** | [USA House Prices — Kaggle (`fratzcan/usa-house-prices`)](https://www.kaggle.com/datasets/fratzcan/usa-house-prices) |
+| **Size** | 4,140 house sales, 18 columns |
+| **Period** | May — July 2014 |
+| **Location** | Seattle area, Washington, USA (43 cities, 77 ZIP codes) |
 | **Target** | `price` (continuous, USD) |
-| **Features** | Bedrooms, bathrooms, sqft, floors, waterfront, condition, location, year built, renovations |
+| **Features** | Bedrooms, bathrooms, sqft, floors, waterfront, view, condition, year built, renovations, city, ZIP code |
 
 ---
 
@@ -43,18 +46,25 @@ location, and condition — using only information available at the time of list
 
 | Step | Description |
 |---|---|
-| 1 | Load & defensive copy (`df → dfc`) |
-| 2 | Structural cleaning — duplicates, column sanitization |
-| 3 | Exploratory Data Analysis (EDA) — Sweetviz report |
-| 4 | Train/test split (80/20) |
-| 5 | Outlier removal — IQR on `y_train` only |
-| 6 | Feature engineering — `house_age`, `was_renovated`, `years_since_update` |
-| 7 | Preprocessing pipeline — imputation + scaling + encoding |
-| 8 | Baseline model — `DummyRegressor` |
-| 9 | Model comparison — Ridge, Random Forest, XGBoost, LightGBM |
-| 10 | Hyperparameter tuning — `BayesSearchCV` on the winner |
-| 11 | Final evaluation — MAE, RMSE, R², dual test set analysis |
-| 12 | Export — full pipeline saved with `joblib` |
+| 1 | Load the data with `kagglehub` and inspect its structure |
+| 2 | Structural cleaning — column sanitization, duplicates, missing-value check |
+| 3 | Remove data-entry errors with fixed per-row rules — $0 prices and impossible price per sq ft (below $50 or above $1,500) |
+| 4 | Feature engineering — `house_age`, `was_renovated`, `years_since_update` |
+| 5 | Exploratory Data Analysis — Sweetviz report on the cleaned dataset |
+| 6 | Train/test split (80/20) |
+| 7 | Preprocessing pipeline — imputation + scaling, one-hot `city`, target-encoded `statezip` |
+| 8 | All models trained on **log(price)** with `TransformedTargetRegressor` |
+| 9 | Baseline model — `DummyRegressor` |
+| 10 | Model comparison — Ridge, Random Forest, XGBoost, LightGBM (5-fold CV) |
+| 11 | Hyperparameter tuning — `GridSearchCV` on the winner, optimizing CV MAE |
+| 12 | Final evaluation — MAE, RMSE, R², MAPE and error analysis on the test set |
+| 13 | Export — full pipeline saved with `joblib`, plus `locations.csv` for the app |
+| 14 | Model explanation — SHAP |
+| 15 | Streamlit web app — `app.py` |
+
+Steps 3 and 4 run before the split because each rule or feature uses only the
+house's own values. Everything **learned from the data** (medians, scaling,
+target encoding) happens inside the pipeline and is fitted on training data only.
 
 ---
 
@@ -68,80 +78,131 @@ Three new features derived from raw columns:
 | `was_renovated` | Binary flag — was the house ever renovated? |
 | `years_since_update` | Years since last renovation or original build |
 
-Raw columns (`yr_built`, `yr_renovated`, `date`) dropped after derivation.
+Raw columns (`yr_built`, `yr_renovated`, `date`) are dropped after derivation, along with
+`street` (almost unique per house) and `country` (always "USA").
 
 ---
 
 ## 🤖 Models Compared
 
-| Model | CV MAE | CV RMSE |
-|---|---|---|
-| Baseline (DummyRegressor) | $175,398 | $217,153 |
-| **LightGBM 🏆 Winner** | **$85,003** | **$119,768** |
-| Ridge | $85,565 | $120,270 |
-| XGBoost | $87,044 | $124,121 |
-| Random Forest | $87,643 | $124,121 |
+5-fold cross-validation on the training set (3,268 houses):
 
-**LightGBM won** — the gradient boosting model edged out Ridge by a small
-margin on both MAE and RMSE. The close competition between LightGBM and Ridge
-suggests the feature-price relationship has both linear and non-linear components.
+| Model | CV MAE | CV RMSE | CV R² |
+|---|---|---|---|
+| **LightGBM 🏆 Winner** | **$92,761** | **$180,091** | **0.750** |
+| Ridge | $95,218 | $190,483 | 0.721 |
+| Random Forest | $96,061 | $181,349 | 0.746 |
+| XGBoost | $97,085 | $192,917 | 0.713 |
+| Baseline (DummyRegressor) | $228,721 | $367,641 | -0.048 |
+
+**LightGBM won** with a CV MAE 59% lower than the baseline. All four models are
+within about $4,300 of each other; Ridge coming second shows that most of the
+price is explained by size, condition and location.
 
 ---
 
 ## 🔧 Hyperparameter Tuning
 
-| Tool | Parameters tuned | Best result |
-|---|---|---|
-| `GridSearchCV` | `n_estimators`, `max_depth`, `learning_rate`, `num_leaves` | CV RMSE = $119,242 |
-
-Key parameters found: `learning_rate=0.2`, `max_depth=5`, `n_estimators=100`, `num_leaves=7`.
+| Tool | Parameters tuned | Best parameters | Result |
+|---|---|---|---|
+| `GridSearchCV` (5-fold, CV MAE) | `n_estimators`, `learning_rate`, `num_leaves` | `n_estimators=300`, `learning_rate=0.06`, `num_leaves=7` | CV MAE $90,427 · CV RMSE $171,985 |
 
 ---
 
 ## 📊 Final Evaluation
 
-Evaluated on **828 completely unseen test houses**:
+Evaluated once on **817 unseen test houses**:
 
-| Metric | Full Test Set | Valid Prices Only |
-|---|---|---|
-| **MAE** | $122,385 | $116,749 |
-| **RMSE** | $231,669 | $221,645 |
-| **R²** | 0.4880 | 0.5209 |
+| Metric | Test Set |
+|---|---|
+| **MAE** | $93,890 |
+| **RMSE** | $209,129 |
+| **R²** | 0.732 |
+| **MAPE** | 16.4% |
 
-> ⚠️ **Note:** 10 houses in the test set had `price = $0` — likely data entry
-> errors. Results are reported for both the full test set and valid-price-only
-> subset for transparency.
+- 73% of predictions are within 20% of the real price, 44% within 10%.
+- The test RMSE is 21.6% above the CV RMSE, but almost all of that gap comes from
+  **one $7.06M house** predicted at $3.08M. Without it, the test RMSE is $156,133,
+  below the CV RMSE.
+
+---
+
+## 🧠 Model Explanation (SHAP)
+
+Typical size of each feature's effect on the predicted price:
+
+| Feature | Typical effect |
+|---|---|
+| `statezip` (ZIP code) | ~30% |
+| `sqft_living` | ~20% |
+| `city` | ~8% |
+| `sqft_above` | ~4.5% |
+| `view` | ~3.3% |
+
+**Location and size drive the price.** Age, renovation history and the number of
+bedrooms matter much less.
 
 ---
 
 ## ⚠️ Key Findings & Limitations
 
-**1. LightGBM beat all models**
-The gradient boosting model narrowly outperformed Ridge, XGBoost, and Random
-Forest — suggesting the feature-price relationship has both linear and
-non-linear components that LightGBM captures better.
+**1. LightGBM beat all models, but narrowly**
+All four models cut the baseline error by more than half and are close to each other.
 
-**2. Large CV vs. test gap — data distribution mismatch**
-Training CV RMSE = $119,242 vs Test RMSE = $221,645 (85.9% gap). This reflects
-a structural limitation — luxury homes above $1.5M were removed from training
-via IQR outlier filtering but remain in the test set. The model was never exposed
-to that price range and predictably underestimates them. This is a data
-distribution mismatch, not a pipeline error.
+**2. Very expensive homes are underestimated**
+The model recognizes what makes a luxury house special (size, ZIP code, waterfront),
+but the training data contains very few of them, so it can't learn how high such
+prices go. Cheap houses, in contrast, tend to be predicted too high.
 
-**3. R² of 0.52 — room for improvement**
-The model explains ~52% of price variance. The remaining 48% likely comes from
-hyperlocal factors (school district, neighborhood desirability, view) not fully
-captured in the available features.
+**3. Small dataset**
+About 3,300 training houses, covering only three months of 2014.
+
+**4. Feature engineering is outside the saved pipeline**
+New houses must have `house_age`, `was_renovated` and `years_since_update`
+calculated before calling `.predict()`. The Streamlit app does this for you;
+in your own code, see the example below.
+
+---
+
+## 🖥️ Open the App
+
+The Streamlit app (`app.py`) lets you enter a house's details and get a predicted price.
+
+**What it does**
+- Pick the **city**, then a **ZIP code** from that city (the list comes from `locations.csv`)
+- Enter bedrooms, bathrooms, floors, area, lot size, year built and year renovated
+- Set the view, the condition and whether the house is on the waterfront
+- Click **Predict price**: the app calculates `house_age`, `was_renovated` and
+  `years_since_update` exactly like the notebook, then shows the predicted price
+
+Prices are in **2014 dollars**, because the model was trained on 2014 sales.
+
+**How to open it**
+
+1. Follow steps 1–3 of **How to Run** below (clone, virtual environment, install the requirements).
+2. Install Streamlit, if it isn't installed yet:
+   ```bash
+   pip install streamlit
+   ```
+3. Make sure `house_price_model.pkl` and `locations.csv` are in the project folder.
+   Both are in the repository; running the notebook creates them again.
+4. Start the app from the project folder:
+   ```bash
+   streamlit run app.py
+   ```
+5. Your browser opens the app at **http://localhost:8501**. If it doesn't, open that address yourself.
+6. To stop the app, press `Ctrl + C` in the terminal.
 
 ---
 
 ## 🚀 Next Steps
 
-- Build a separate model for luxury homes (above $1.5M) to close the CV/test gap
+- Publish the app on Streamlit Community Cloud so it has a public link
+- Show a SHAP chart in the app explaining each prediction
+- Move the feature engineering into the pipeline so the model takes raw columns
 - Add geospatial features — distance to city center, school district ratings
-- Test target encoding on `statezip` to recover granularity without one-hot sparsity
-- Collect more data — ~3,300 training rows limits what LightGBM can learn
-- Deploy as a FastAPI endpoint for real-time price predictions
+- Collect more data, especially for expensive homes
+- Add a FastAPI endpoint for other programs to request predictions
 
 ---
 
@@ -149,32 +210,35 @@ captured in the available features.
 
 | Tool | Version | Purpose |
 |---|---|---|
-| Python | 3.10+ | Core language |
-| Pandas | 2.0+ | Data manipulation |
-| Scikit-learn | 1.3+ | Modeling & pipelines |
-| XGBoost | 1.7+ | Gradient boosting |
-| LightGBM | 3.3+ | Gradient boosting |
-| Scikit-Optimize | 0.9+ | Bayesian hypertuning |
-| Sweetviz | 2.1+ | EDA report |
+| Python | 3.13+ | Core language |
+| Pandas | 3.1 | Data manipulation |
+| Scikit-learn | 1.9 | Modeling & pipelines |
+| XGBoost | 3.4 | Gradient boosting |
+| LightGBM | 4.7 | Gradient boosting |
+| SHAP | 0.54 | Model explanation |
+| Sweetviz | 2.3 | EDA report |
 | Matplotlib/Seaborn | — | Visualization |
 | Joblib | — | Model export |
+| Streamlit | — | Web app |
 
 ---
 
 ## 📁 Project Structure
 
 ```
-house_price_prediction/
+House_Prices_Prediction/
 │
-├── data/                    # Raw and cleaned datasets
-├── notebooks/
-│   └── project.ipynb        # Main notebook — full pipeline
-├── models/
-│   └── house_price_pipeline.pkl  # Exported LightGBM pipeline
-├── reports/
-│   └── House_Price_Report.html   # Sweetviz EDA report
+├── project.ipynb              # Main notebook — full pipeline
+├── app.py                     # Streamlit web app
+├── house_price_model.pkl      # Exported pipeline (preprocessing + tuned LightGBM)
+├── locations.csv              # Valid city / ZIP code pairs for the app's dropdowns
+├── House_Prices_Report.html   # Sweetviz EDA report (cleaned dataset)
+├── requirements.txt
+├── LICENSE
 └── README.md
 ```
+
+The dataset is downloaded automatically by `kagglehub` when the notebook runs.
 
 ---
 
@@ -182,8 +246,8 @@ house_price_prediction/
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/house-price-prediction.git
-cd house-price-prediction
+git clone https://github.com/MaykInvest/House_Prices_Prediction.git
+cd House_Prices_Prediction
 
 # 2. Create virtual environment
 python -m venv .venv
@@ -193,7 +257,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 4. Run the notebook
-jupyter notebook notebooks/project.ipynb
+jupyter lab project.ipynb
 ```
 
 ---
@@ -205,9 +269,9 @@ import joblib
 import pandas as pd
 
 # Load the exported pipeline
-model = joblib.load('models/house_price_pipeline.pkl')
+model = joblib.load('house_price_model.pkl')
 
-# Predict on a new house
+# Predict on a new house (the three engineered features must be calculated first)
 new_house = pd.DataFrame([{
     'bedrooms'        : 3,
     'bathrooms'       : 2.0,
@@ -229,6 +293,21 @@ new_house = pd.DataFrame([{
 predicted_price = model.predict(new_house)[0]
 print(f"Predicted price: ${predicted_price:,.0f}")
 ```
+
+---
+
+## 📝 Changelog
+
+**Latest update**
+- ✨ **Added a Streamlit web app** (`app.py`) to predict a house's price from a form
+- ✨ Added `locations.csv` (valid city / ZIP code pairs), exported by the notebook for the app
+- 🔧 Hyperparameter tuning now optimizes **CV MAE**, the same metric used to choose the winning model
+- 🔧 The test RMSE without the most expensive house is now calculated in the notebook instead of written by hand
+- 🔧 SHAP: the one-hot city effects are added up with their signs before measuring their size
+- 📝 Notebook text fixed to match the code (when the cleaning runs, old tuning numbers, typos)
+- 📝 Notebook re-run from top to bottom in a fresh kernel
+- 📝 README rewritten to match the current project
+- 🛠️ `requirements.txt` converted from UTF-16 to UTF-8 so `pip install -r` works
 
 ---
 
